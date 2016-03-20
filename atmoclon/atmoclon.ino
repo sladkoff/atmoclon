@@ -4,6 +4,7 @@
  Author:	leonid.koftun@gmail.com
 */
 
+#include <ArduinoJson.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <ESP8266WiFi.h>
@@ -29,6 +30,7 @@ char temp_publish_value[15];
 WiFiClient espClient;
 PubSubClient client(espClient);
 Adafruit_BME280 bme; // I2C
+StaticJsonBuffer<200> jsonBuffer;
 
 void start_watch() {
 	watch_start = millis();
@@ -96,18 +98,9 @@ void setup_mqtt() {
 	}
 }
 
-/*
-Publishes a float value to broker. 
-TODO: optimize? Variable width/precision.
-*/
-void publish_float(const char *topic, float value) {
-	dtostrf(value, 2, 3, temp_publish_value);
-	client.publish(topic, temp_publish_value);
-}
-
 void deep_sleep() {
 	Serial.println("Going to sleep.");
-	ESP.deepSleep(60000000);
+	ESP.deepSleep(SLEEP_DURATION);
 }
 
 void setup() {
@@ -132,14 +125,26 @@ void setup() {
 	stop_watch();
 	long mqtt_setup_time = last_watch;
 
-	// Publish debug information
-	publish_float("atmoclon/debug/wifi-time", wifi_setup_time);
-	publish_float("atmoclon/debug/mqtt-time", mqtt_setup_time);
+	// create json 
+	JsonObject& root = jsonBuffer.createObject();
+	root["sensor"] = "atmosphere";
+	root["temp"] = bme.readTemperature();
+	root["humidity"] = bme.readHumidity();
+	root["pressure"] = bme.readPressure();
+	JsonObject& debug = root.createNestedObject("debug_info");
+	debug["wifi_time"] = wifi_setup_time;
+	debug["mqtt_time"] = mqtt_setup_time;
+	const int length = root.measureLength();
+	char* json = new char[length];
 
-	// Publish BME values
-	publish_float("atmoclon/temp", bme.readTemperature());
-	publish_float("atmoclon/humidity", bme.readHumidity());
-	publish_float("atmoclon/pressure", bme.readPressure());
+	// json to string
+	root.printTo(json, length);
+	Serial.println(json);
+
+	Serial.println(sizeof(json));
+
+	// Publish json
+	bool success = client.publish("atmoclon/data", json);
 
 	// Save energy
 	Serial.println("All done.");
